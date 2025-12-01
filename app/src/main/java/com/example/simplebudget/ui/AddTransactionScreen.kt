@@ -81,8 +81,9 @@ fun AddTransactionScreen(
                     expanded = categoryMenuExpanded,
                     onDismissRequest = { categoryMenuExpanded = false }
                 ) {
-                    viewModel.categories.forEach { category ->
-                        DropdownMenuItem(
+                    BudgetCategory.defaultCategories.forEach { category ->
+
+                    DropdownMenuItem(
                             text = { Text(category.displayName) },
                             onClick = {
                                 selectedCategory = category

@@ -6,13 +6,12 @@ import androidx.lifecycle.viewModelScope
 import com.example.simplebudget.data.AppDatabase
 import com.example.simplebudget.data.entities.Budget
 import com.example.simplebudget.data.entities.BudgetCategory
-import com.example.simplebudget.data.entities.TransactionEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
 import java.util.Calendar
 import java.util.Locale
 
@@ -36,32 +35,19 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
 
     private val dao = AppDatabase.getInstance(application).budgetDao()
 
-    val categories: List<BudgetCategory> = BudgetCategory.defaultCategories
-
     private val _uiState = MutableStateFlow(BudgetUiState())
     val uiState: StateFlow<BudgetUiState> = _uiState.asStateFlow()
 
-    // 🔽 NEW: keep full list of transactions for the current month
-    private val _transactions = MutableStateFlow<List<TransactionEntity>>(emptyList())
-    val transactions: StateFlow<List<TransactionEntity>> = _transactions.asStateFlow()
-
     init {
-        observeCurrentMonth()
+        observeBudgetsForCurrentMonth()
     }
 
-    private fun observeCurrentMonth() {
+    private fun observeBudgetsForCurrentMonth() {
         val monthYear = _uiState.value.monthYear
-        val (startMillis, endMillis) = getMonthStartEnd(monthYear)
 
         viewModelScope.launch {
-            combine(
-                dao.getBudgetsForMonth(monthYear),
-                dao.getTransactionsForPeriod(startMillis, endMillis)
-            ) { budgets, transactions ->
-                val summaries = buildCategorySummaries(budgets, transactions)
-                summaries to transactions
-            }.collect { (summaries, transactions) ->
-                _transactions.value = transactions
+            dao.getBudgetsForMonth(monthYear).collectLatest { budgets ->
+                val summaries = buildCategorySummaries(budgets)
                 _uiState.update {
                     it.copy(
                         summaries = summaries,
@@ -73,65 +59,93 @@ class BudgetViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // ✅ Only ACTIVE budgets become cards
     private fun buildCategorySummaries(
-        budgets: List<Budget>,
-        transactions: List<TransactionEntity>
+        budgets: List<Budget>
     ): List<CategorySummary> {
-        return categories.map { category ->
-            val budgetAmount =
-                budgets.find { it.categoryName == category.name }?.budgetAmount ?: 0.0
-            val spentAmount = transactions
-                .filter { it.categoryName == category.name }
-                .sumOf { it.amount }
 
+        val activeBudgets = budgets.filter { it.isActive }
+
+        return activeBudgets.map { budget ->
             CategorySummary(
-                category = category,
-                budgetAmount = budgetAmount,
-                spentAmount = spentAmount
+                category = BudgetCategory.valueOf(budget.categoryName),
+                budgetAmount = budget.maxBudget,
+                spentAmount = budget.spentAmount
             )
         }
     }
 
-    fun setBudgetForCategory(category: BudgetCategory, amount: Double) {
+    // ✅ DELETE = hide the card completely
+    fun deleteCategoryBudget(category: BudgetCategory) {
         val monthYear = _uiState.value.monthYear
+
         viewModelScope.launch {
-            val budget = Budget(
-                monthYear = monthYear,
-                categoryName = category.name,
-                budgetAmount = amount
-            )
-            dao.insertBudget(budget)
+            val existing = dao.getBudgetForCategory(monthYear, category.name)
+
+            if (existing != null) {
+                val hidden = existing.copy(
+                    maxBudget = 0.0,
+                    spentAmount = 0.0,
+                    isActive = false   // ✅ completely hide the card
+                )
+                dao.insertOrUpdateBudget(hidden)
+            }
         }
     }
 
+    /** ✅ Set or update the MAX budget for this category */
+    fun setMaxBudgetForCategory(category: BudgetCategory, amount: Double) {
+        val monthYear = _uiState.value.monthYear
+
+        viewModelScope.launch {
+            val existing = dao.getBudgetForCategory(monthYear, category.name)
+
+            val updated = if (existing == null) {
+                Budget(
+                    monthYear = monthYear,
+                    categoryName = category.name,
+                    maxBudget = amount,
+                    spentAmount = 0.0,
+                    isActive = true      // ✅ IMPORTANT: card becomes visible
+                )
+            } else {
+                existing.copy(
+                    maxBudget = amount,
+                    isActive = true     // ✅ Reactivate if previously deleted
+                )
+            }
+
+            dao.insertOrUpdateBudget(updated)
+        }
+    }
+
+    /** ✅ Add expense = increase spent AND reactivate category if deleted */
     fun addTransaction(
         amount: Double,
         category: BudgetCategory,
-        description: String?
+        @Suppress("UNUSED_PARAMETER") description: String?
     ) {
-        val now = System.currentTimeMillis()
-        viewModelScope.launch {
-            val tx = TransactionEntity(
-                timestamp = now,
-                amount = amount,
-                categoryName = category.name,
-                description = description?.takeIf { it.isNotBlank() }
-            )
-            dao.insertTransaction(tx)
-        }
-    }
+        val monthYear = _uiState.value.monthYear
 
-    // 🔽 NEW: delete a single transaction
-    fun deleteTransaction(transaction: TransactionEntity) {
         viewModelScope.launch {
-            dao.deleteTransaction(transaction)
-        }
-    }
+            val existing = dao.getBudgetForCategory(monthYear, category.name)
 
-    // 🔽 NEW: optional - clear all
-    fun deleteAllTransactions() {
-        viewModelScope.launch {
-            dao.deleteAllTransactions()
+            val updated = if (existing == null) {
+                Budget(
+                    monthYear = monthYear,
+                    categoryName = category.name,
+                    maxBudget = 0.0,
+                    spentAmount = amount,
+                    isActive = true     // ✅ ensure card is visible
+                )
+            } else {
+                existing.copy(
+                    spentAmount = existing.spentAmount + amount,
+                    isActive = true     // ✅ re-show if previously deleted
+                )
+            }
+
+            dao.insertOrUpdateBudget(updated)
         }
     }
 
@@ -145,24 +159,4 @@ fun currentMonthYear(): String {
     val year = cal.get(Calendar.YEAR)
     val month = cal.get(Calendar.MONTH) + 1
     return String.format(Locale.US, "%04d-%02d", year, month)
-}
-
-private fun getMonthStartEnd(monthYear: String): Pair<Long, Long> {
-    val parts = monthYear.split("-")
-    val year = parts[0].toInt()
-    val month = parts[1].toInt() - 1
-
-    val cal = Calendar.getInstance().apply {
-        set(Calendar.YEAR, year)
-        set(Calendar.MONTH, month)
-        set(Calendar.DAY_OF_MONTH, 1)
-        set(Calendar.HOUR_OF_DAY, 0)
-        set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-    }
-    val start = cal.timeInMillis
-    cal.add(Calendar.MONTH, 1)
-    val end = cal.timeInMillis - 1
-    return start to end
 }

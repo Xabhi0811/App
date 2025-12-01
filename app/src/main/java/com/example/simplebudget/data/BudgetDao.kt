@@ -1,12 +1,10 @@
 package com.example.simplebudget.data
 
 import androidx.room.Dao
-import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.example.simplebudget.data.entities.Budget
-import com.example.simplebudget.data.entities.TransactionEntity
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -16,26 +14,16 @@ interface BudgetDao {
     fun getBudgetsForMonth(monthYear: String): Flow<List<Budget>>
 
     @Query(
-        "SELECT * FROM transactions " +
-                "WHERE timestamp BETWEEN :startMillis AND :endMillis " +
-                "ORDER BY timestamp DESC"
+        "SELECT * FROM budgets " +
+                "WHERE monthYear = :monthYear AND categoryName = :categoryName " +
+                "LIMIT 1"
     )
-    fun getTransactionsForPeriod(
-        startMillis: Long,
-        endMillis: Long
-    ): Flow<List<TransactionEntity>>
+    suspend fun getBudgetForCategory(
+        monthYear: String,
+        categoryName: String
+    ): Budget?
 
+    // Insert or update (we always replace the whole row)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertBudget(budget: Budget)
-
-    @Insert
-    suspend fun insertTransaction(transaction: TransactionEntity)
-
-
-    @Delete
-    suspend fun deleteTransaction(transaction: TransactionEntity)
-
-
-    @Query("DELETE FROM transactions")
-    suspend fun deleteAllTransactions()
+    suspend fun insertOrUpdateBudget(budget: Budget)
 }

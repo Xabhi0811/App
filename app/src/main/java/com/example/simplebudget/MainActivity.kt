@@ -16,7 +16,6 @@ import androidx.navigation.compose.rememberNavController
 import com.example.simplebudget.ui.AddTransactionScreen
 import com.example.simplebudget.ui.BudgetViewModel
 import com.example.simplebudget.ui.OverviewScreen
-import com.example.simplebudget.ui.TransactionsScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -24,7 +23,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         setContent {
             SimpleBudgetApp(budgetViewModel)
         }
@@ -33,7 +31,6 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun SimpleBudgetApp(viewModel: BudgetViewModel) {
-
     val navController = rememberNavController()
 
     MaterialTheme {
@@ -41,10 +38,7 @@ fun SimpleBudgetApp(viewModel: BudgetViewModel) {
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background
         ) {
-            SimpleBudgetNavHost(
-                navController = navController,
-                viewModel = viewModel
-            )
+            SimpleBudgetNavHost(navController, viewModel)
         }
     }
 }
@@ -58,26 +52,11 @@ fun SimpleBudgetNavHost(
         navController = navController,
         startDestination = "overview"
     ) {
-
         composable("overview") {
-            OverviewScreen(
-                navController = navController,
-                viewModel = viewModel
-            )
+            OverviewScreen(navController, viewModel)
         }
-
         composable("addTransaction") {
-            AddTransactionScreen(
-                navController = navController,
-                viewModel = viewModel
-            )
-        }
-
-        composable("transactions") {
-            TransactionsScreen(
-                navController = navController,
-                viewModel = viewModel
-            )
+            AddTransactionScreen(navController, viewModel)
         }
     }
 }
